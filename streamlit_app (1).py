@@ -1,109 +1,57 @@
-# app.py
 import streamlit as st
+import PyPDF2
 import pandas as pd
-import numpy as np
+import zipfile
+import os
 
-def calculate_similarity_score(row, subject_property):
-    """Calculate similarity score between a property and subject property."""
-    market_value_diff = abs(row['Market Value-2024'] - subject_property['Market Value-2024']) / subject_property['Market Value-2024']
-    vpr_diff = abs(row['VPR'] - subject_property['VPR']) / subject_property['VPR']
-    # Weight market value difference more heavily (70%) than VPR difference (30%)
-    return (market_value_diff * 0.7) + (vpr_diff * 0.3)
+# Streamlit app title
+st.title("PDF Splitter and Renamer")
 
-def find_comparables(df, subject_index):
-    """Find comparable properties for given subject property."""
-    subject_property = df.iloc[subject_index]
-    
-    # Create mask for each condition
-    different_hotel = df['Hotel Name'] != subject_property['Hotel Name']
-    different_address = df['Property Address'] != subject_property['Property Address']
-    different_owner = df['Owner Name/ LLC Name'] != subject_property['Owner Name/ LLC Name']
-    different_owner_address = df['Owner Street Address'] != subject_property['Owner Street Address']
-    
-    market_value_range = (abs(df['Market Value-2024'] - subject_property['Market Value-2024']) <= 100000)
-    vpr_condition = df['VPR'] < subject_property['VPR'] * 0.5
-    same_class = df['Hotel Class'] == subject_property['Hotel Class']
-    is_hotel = df['Type'] == 'Hotel'
-    
-    # Exclude subject property
-    not_subject = df.index != subject_index
-    
-    # Combine all conditions
-    eligible_mask = (
-        different_hotel &
-        different_address &
-        different_owner &
-        different_owner_address &
-        market_value_range &
-        vpr_condition &
-        same_class &
-        is_hotel &
-        not_subject
-    )
-    
-    # Get eligible properties
-    eligible_properties = df[eligible_mask].copy()
-    
-    if len(eligible_properties) == 0:
-        return pd.DataFrame()
-    
-    # Calculate similarity scores
-    eligible_properties['similarity_score'] = eligible_properties.apply(
-        lambda row: calculate_similarity_score(row, subject_property), axis=1
-    )
-    
-    # Sort by similarity score and get top 5
-    comparable_properties = eligible_properties.nsmallest(5, 'similarity_score')
-    return comparable_properties
+# Upload PDF file
+pdf_file = st.file_uploader("Upload PDF file", type=["pdf"])
 
-def main():
-    st.title("Hotel Property Comparables Generator")
-    
-    # File upload
-    uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx', 'xls'])
-    
-    if uploaded_file is not None:
-        # Load data
-        df = pd.read_excel(uploaded_file)
-        
-        # Initialize session state for current index if not exists
-        if 'current_index' not in st.session_state:
-            st.session_state.current_index = 0
-        
-        # Navigation buttons
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button('⬅️ Previous') and st.session_state.current_index > 0:
-                st.session_state.current_index -= 1
-        with col2:
-            st.write(f"Property {st.session_state.current_index + 1} of {len(df)}")
-        with col3:
-            if st.button('Next ➡️') and st.session_state.current_index < len(df) - 1:
-                st.session_state.current_index += 1
-        
-        # Get subject property and comparables
-        subject_property = df.iloc[st.session_state.current_index:st.session_state.current_index+1]
-        comparables = find_comparables(df, st.session_state.current_index)
-        
-        # Display results
-        st.subheader("Subject Property")
-        st.dataframe(subject_property)
-        
-        if len(comparables) > 0:
-            st.subheader("Comparable Properties")
-            st.dataframe(comparables.drop('similarity_score', axis=1))
-            
-            # Download results
-            result_df = pd.concat([subject_property, comparables.drop('similarity_score', axis=1)])
-            csv = result_df.to_csv(index=False)
+# Upload Excel file
+excel_file = st.file_uploader("Upload Excel file", type=["xlsx"])
+
+if pdf_file and excel_file:
+    # Read the Excel file
+    names_df = pd.read_excel(excel_file)
+    names_list = names_df.iloc[:, 0].tolist()  # Assuming names are in the first column
+
+    # Read the PDF file
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+
+    # Check if the number of pages matches the number of names
+    if len(pdf_reader.pages) != len(names_list):
+        st.error("The number of pages in the PDF does not match the number of names in the Excel file.")
+    else:
+        # Create a directory to save the split PDF files
+        output_dir = "split_pdfs"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Split and save each page with the respective name
+        for i, page in enumerate(pdf_reader.pages):
+            pdf_writer = PyPDF2.PdfWriter()
+            pdf_writer.add_page(page)
+
+            output_filename = f"{names_list[i]}.pdf"
+            output_path = os.path.join(output_dir, output_filename)
+            with open(output_path, 'wb') as output_pdf:
+                pdf_writer.write(output_pdf)
+
+        # Create a ZIP file containing all the split PDFs
+        zip_filename = "split_pdfs.zip"
+        with zipfile.ZipFile(zip_filename, 'w') as zipf:
+            for file in os.listdir(output_dir):
+                zipf.write(os.path.join(output_dir, file), file)
+
+        # Provide a link to download the ZIP file
+        with open(zip_filename, "rb") as f:
             st.download_button(
-                label="Download Current Results",
-                data=csv,
-                file_name=f"comparables_{st.session_state.current_index + 1}.csv",
-                mime="text/csv"
+                label="Download ZIP",
+                data=f,
+                file_name=zip_filename,
+                mime="application/zip"
             )
-        else:
-            st.warning("No comparable properties found for the current subject property.")
 
-if __name__ == "__main__":
-    main()
+        st.success("PDF has been split and renamed successfully. Click the button above to download the files.")
