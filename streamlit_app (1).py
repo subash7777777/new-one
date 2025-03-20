@@ -7,10 +7,10 @@ import os
 # Streamlit app title
 st.title("PDF Splitter and Renamer")
 
-# Upload PDF file
+
 pdf_file = st.file_uploader("Upload PDF file", type=["pdf"])
 
-# Upload Excel file
+
 excel_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 if pdf_file and excel_file:
